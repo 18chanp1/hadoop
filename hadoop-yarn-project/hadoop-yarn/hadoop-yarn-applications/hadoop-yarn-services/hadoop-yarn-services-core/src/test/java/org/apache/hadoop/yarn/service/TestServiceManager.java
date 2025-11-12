@@ -18,9 +18,11 @@
 
 package org.apache.hadoop.yarn.service;
 
+import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.test.GenericTestUtils;
 import org.apache.hadoop.yarn.api.records.ApplicationId;
+import org.apache.hadoop.yarn.event.AsyncDispatcher;
 import org.apache.hadoop.yarn.service.api.records.Artifact;
 import org.apache.hadoop.yarn.service.api.records.ComponentState;
 import org.apache.hadoop.yarn.service.api.records.ContainerState;
@@ -32,10 +34,13 @@ import org.apache.hadoop.yarn.service.component.instance.ComponentInstanceEvent;
 import org.apache.hadoop.yarn.service.component.instance.ComponentInstanceEventType;
 import org.apache.hadoop.yarn.service.exceptions.SliderException;
 import org.apache.hadoop.yarn.service.utils.ServiceApiUtil;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.extension.RegisterExtension;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
@@ -55,10 +60,12 @@ public class TestServiceManager {
   private ServiceTestUtils.ServiceFSWatcher rule =
       new ServiceTestUtils.ServiceFSWatcher();
 
+  private ServiceContext context;
+
   @Test
   @Timeout(value = TIMEOUT)
   public void testUpgrade() throws Exception {
-    ServiceContext context = createServiceContext("testUpgrade");
+    context = createServiceContext("testUpgrade");
     initUpgrade(context, "v2", false, false, false);
     assertEquals(ServiceState.UPGRADING,
         context.getServiceManager().getServiceSpec().getState(), "service not upgraded");
@@ -67,9 +74,8 @@ public class TestServiceManager {
   @Test
   @Timeout(value = TIMEOUT)
   public void testRestartNothingToUpgrade()
-      throws Exception {
-    ServiceContext context = createServiceContext(
-        "testRestartNothingToUpgrade");
+    throws Exception {
+    context = createServiceContext("testRestartNothingToUpgrade");
     initUpgrade(context, "v2", false, false, false);
     ServiceManager manager = context.getServiceManager();
     //make components stable by upgrading all instances
@@ -87,7 +93,7 @@ public class TestServiceManager {
   @Test
   @Timeout(value = TIMEOUT)
   public void testAutoFinalizeNothingToUpgrade() throws Exception {
-    ServiceContext context = createServiceContext(
+    context = createServiceContext(
         "testAutoFinalizeNothingToUpgrade");
     initUpgrade(context, "v2", false, true, false);
     ServiceManager manager = context.getServiceManager();
@@ -105,7 +111,7 @@ public class TestServiceManager {
   @Timeout(value = TIMEOUT)
   public void testRestartWithPendingUpgrade()
       throws Exception {
-    ServiceContext context = createServiceContext("testRestart");
+    context = createServiceContext("testRestart");
     initUpgrade(context, "v2", true, false, false);
     ServiceManager manager = context.getServiceManager();
 
@@ -119,7 +125,7 @@ public class TestServiceManager {
   @Test
   @Timeout(value = TIMEOUT)
   public void testFinalize() throws Exception {
-    ServiceContext context = createServiceContext("testCheckState");
+    context = createServiceContext("testCheckState");
     initUpgrade(context, "v2", true, false, false);
     ServiceManager manager = context.getServiceManager();
     assertEquals(ServiceState.UPGRADING,
@@ -143,7 +149,7 @@ public class TestServiceManager {
   @Test
   @Timeout(value = TIMEOUT)
   public void testAutoFinalize() throws Exception {
-    ServiceContext context = createServiceContext("testCheckStateAutoFinalize");
+    context = createServiceContext("testCheckStateAutoFinalize");
     ServiceManager manager = context.getServiceManager();
     manager.getServiceSpec().setState(
         ServiceState.UPGRADING_AUTO_FINALIZE);
@@ -163,8 +169,8 @@ public class TestServiceManager {
 
   @Test
   public void testInvalidUpgrade() throws Exception {
-    ServiceContext serviceContext = createServiceContext("testInvalidUpgrade");
-    ServiceManager manager = serviceContext.getServiceManager();
+    context = createServiceContext("testInvalidUpgrade");
+    ServiceManager manager = context.getServiceManager();
     manager.getServiceSpec().setState(
         ServiceState.UPGRADING_AUTO_FINALIZE);
     Service upgradedDef = ServiceTestUtils.createExampleApplication();
@@ -185,7 +191,7 @@ public class TestServiceManager {
   @Test
   @Timeout(value = TIMEOUT)
   public void testExpressUpgrade() throws Exception {
-    ServiceContext context = createServiceContext("testExpressUpgrade");
+    context = createServiceContext("testExpressUpgrade");
     ServiceManager manager = context.getServiceManager();
     manager.getServiceSpec().setState(ServiceState.EXPRESS_UPGRADING);
     initUpgrade(context, "v2", true, true, true);
@@ -211,7 +217,7 @@ public class TestServiceManager {
   @Test
   @Timeout(value = TIMEOUT)
   public void testCancelUpgrade() throws Exception {
-    ServiceContext context = createServiceContext("testCancelUpgrade");
+    context = createServiceContext("testCancelUpgrade");
     writeInitialDef(context.service);
     initUpgrade(context, "v2", true, false, false);
     ServiceManager manager = context.getServiceManager();
@@ -242,7 +248,7 @@ public class TestServiceManager {
   @Test
   @Timeout(value = TIMEOUT)
   public void testCancelUpgradeAfterInitiate() throws Exception {
-    ServiceContext context = createServiceContext("testCancelUpgrade");
+    context = createServiceContext("testCancelUpgrade");
     writeInitialDef(context.service);
     initUpgrade(context, "v2", true, false, false);
     ServiceManager manager = context.getServiceManager();
@@ -259,6 +265,26 @@ public class TestServiceManager {
         manager.getServiceSpec().getState(), "service upgrade not cancelled");
 
     validateUpgradeFinalization(manager.getName(), "v1");
+  }
+
+  @BeforeEach
+  @AfterEach
+  public void tearDown() throws Exception {
+    if (context != null && context.scheduler != null) {
+        AsyncDispatcher dispatcher = context.scheduler.getDispatcher();
+        dispatcher.stop();
+        dispatcher.close();
+    }
+    context = null;
+  }
+
+  @BeforeEach
+  @AfterEach
+  public void cleanupFs() throws IOException {
+      // clean ServiceFSWatcher dirs
+      FileUtils.deleteDirectory(new File("target/org.apache.hadoop.yarn.service.ServiceTest"));
+      // clean upgrades / cluster apps
+      FileUtils.deleteDirectory(new File("target/apps"));
   }
 
   private void validateUpgradeFinalization(String serviceName,
